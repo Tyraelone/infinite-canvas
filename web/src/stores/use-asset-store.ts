@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { localWorkspaceActive, localWorkspaceEnabled } from "@/services/local-workspace";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
@@ -173,6 +174,7 @@ export const useAssetStore = create<AssetStore>()(
                     return { assets };
                 }),
             hydrateAccountAssets: async (token, syncEnabled = false) => {
+                if (await localWorkspaceEnabled()) return;
                 if (!token) return;
                 activeAssetSyncToken = token;
                 accountAssetSyncEnabled = syncEnabled;
@@ -184,6 +186,7 @@ export const useAssetStore = create<AssetStore>()(
                             asset.kind === "image" && asset.data.storageKey?.startsWith("image:") ? resolveStoredAsset(asset) : asset,
                         ),
                     );
+                    if (await localWorkspaceEnabled()) return;
                     if (syncEnabled) {
                         set({ assets: remoteAssets });
                     } else {
@@ -197,6 +200,7 @@ export const useAssetStore = create<AssetStore>()(
                 }
             },
             syncAccountAssets: async (token) => {
+                if (await localWorkspaceEnabled()) return;
                 if (!token || !accountAssetSyncEnabled) return;
                 await syncUserAssetData(token, { assets: get().assets });
             },
@@ -265,6 +269,7 @@ export const useAssetStore = create<AssetStore>()(
 );
 
 function scheduleAssetSync(get: () => AssetStore) {
+    if (localWorkspaceActive()) return;
     if (isHydratingAccountAssets || !activeAssetSyncToken || !accountAssetSyncEnabled || typeof window === "undefined") return;
     if (syncTimer) window.clearTimeout(syncTimer);
     syncTimer = window.setTimeout(() => {

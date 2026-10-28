@@ -18,7 +18,7 @@ export type CanvasVideoResourceOption = { nodeId: string; kind: "text" | "image"
 
 type CanvasVideoSettingsPopoverProps = {
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoMode" | "videoNegativePrompt" | "videoGenerateAudio" | "videoWatermark" | "videoCharacterOrientation", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoMode" | "videoNegativePrompt" | "videoGenerateAudio" | "videoUpscale" | "videoWatermark" | "videoCharacterOrientation", value: string) => void;
     frameOptions?: CanvasVideoFrameOption[];
     resourceOptions?: CanvasVideoResourceOption[];
     metadata?: CanvasNodeMetadata;
@@ -72,6 +72,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, frameOption
                     <span className="truncate">
                         {videoResolutionLabel(config.vquality)} · {videoSizeLabel(config.size)}
                         {visualOnly ? null : <> · {videoSecondsLabel(config.videoSeconds)}</>}
+                        {config.videoUpscale === "true" ? " · 2×" : null}
                     </span>
                 </Button>
             </span>

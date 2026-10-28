@@ -1,4 +1,5 @@
 import axios from "axios";
+import { LOCAL_CHANNEL_ID } from "@/lib/local-runtime";
 import { executeParameterTranslation, findParameterTranslation, normalizeTranslationAspectRatio, translationBody, translationHeaders, type TranslationInput } from "./channel-parameter-translation";
 
 import { isMiniMaxChannel, miniMaxModels } from "@/lib/minimax-video";
@@ -524,6 +525,7 @@ function withPromptGuard(config: AiConfig, prompt: string) {
 }
 
 function usesAccountProxy(config: AiConfig) {
+    if (config.channelMode === "local" && localChannelForActiveModel(config)?.id === LOCAL_CHANNEL_ID) return false;
     const token = useUserStore.getState().token;
     return config.channelMode === "remote" || (config.channelMode === "local" && Boolean(token));
 }

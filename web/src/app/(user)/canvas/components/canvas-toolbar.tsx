@@ -1,5 +1,6 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useRef, useState } from "react";
+import { Clapperboard } from "lucide-react";
 import { Button, Segmented, Switch } from "antd";
 import { CircleDot, Eraser, FolderOpen, Globe2, Grid2x2, Hand, Image as ImageIcon, Info, Layers3, Library, Moon, MousePointer2, Music2, Palette, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
@@ -16,6 +17,7 @@ export function CanvasToolbar({
     showImageInfo,
     onAddImage,
     onAddVideo,
+    onComposeVideo,
     onAddAudio,
     onAddText,
     onAddPanorama,
@@ -40,6 +42,7 @@ export function CanvasToolbar({
     showImageInfo: boolean;
     onAddImage: () => void;
     onAddVideo: () => void;
+    onComposeVideo: () => void;
     onAddAudio: () => void;
     onAddText: () => void;
     onAddPanorama: () => void;
@@ -91,6 +94,9 @@ export function CanvasToolbar({
                 </ToolbarButton>
                 <ToolbarButton id="tool-video" label="视频" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddVideo}>
                     <Video className="size-4.5" />
+                </ToolbarButton>
+                <ToolbarButton id="tool-compose" label="合成视频" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onComposeVideo}>
+                    <Clapperboard className="size-4.5" />
                 </ToolbarButton>
                 <ToolbarButton id="tool-audio" label="音频" hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onAddAudio}>
                     <Music2 className="size-4.5" />
@@ -297,6 +303,7 @@ function toolLabel(id: string) {
     if (id === "tool-text") return "文本";
     if (id === "tool-image") return "图片";
     if (id === "tool-video") return "视频";
+    if (id === "tool-compose") return "合成视频";
     if (id === "tool-audio") return "音频";
     if (id === "tool-panorama") return "全景图";
     if (id === "tool-director") return "导演台";

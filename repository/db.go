@@ -96,6 +96,10 @@ func DB() (*gorm.DB, error) {
 			&model.CanvasProject{},
 			&model.ComfyBridge{},
 			&model.ComfyBridgeRequest{},
+			&model.LocalWorkspaceState{},
+			&model.LocalWorkspaceFile{},
+			&model.LocalWorkspaceMigration{},
+			&model.LocalWorkspaceTombstone{},
 		)
 	})
 	return db, dbErr

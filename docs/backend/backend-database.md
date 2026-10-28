@@ -5,7 +5,11 @@ description: 当前后端主要数据表与字段说明
 
 # 数据库说明
 
+本机创作租约不增加数据库表：`POST /api/local-workspace/lease` 以当前画布版本取得 45 秒内存租约，按 `X-Workspace-Client` 区分制作页面。租约校验与状态写入使用同一互斥锁；其他页面的 PUT / 导入返回 HTTP 423，GET 与媒体读取不受影响。服务重启或租约过期可重新取得，元数据和媒体仍由下述持久化表保存。
+
 本文档只记录后端当前已经使用的主要数据表。
+
+本机视频合成任务另复用`data/local-runtime/gateway.sqlite`的`jobs(id PRIMARY KEY, kind, payload)`，`kind=composition`。payload保存规范化来源媒体键、裁剪顺序、状态、进度、结果哈希和共享媒体键。不同任务类别不得占用同一ID；相同requestId与参数重试返回同一任务。服务重启将queued/processing标记为中断失败，已完成结果保留。此表属于Python本机网关，不参与Go的GORM迁移；最终媒体仍经Go共享文件表发布。
 
 ## 数据库
 
@@ -36,8 +40,63 @@ description: 当前后端主要数据表与字段说明
 - `canvas_projects`
 - `user_configs`
 - `storage_objects`
+- `local_workspace_states`
+- `local_workspace_files`
+- `local_workspace_migrations`
+- `local_workspace_tombstones`
 
 后续新增表时再同步补充本文档，未实际使用的规划表不提前写入。
+
+### local_workspace_states
+
+本机共享画布和“我的素材”的状态，与账号同步的 `canvas_projects`、后台素材 `assets` 独立。仅当 `CANVAS_LOCAL_MODE=1` 时注册 `/api/local-workspace` 接口；所有请求必须携带非空 `CANVAS_LOCAL_TOKEN` 对应的 Bearer 凭据，由本机 Next 同源代理注入。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `name` | string | 主键，只允许 `canvas`、`assets` |
+| `value` | text | 原 Zustand 持久化 JSON 字符串，分别包含 `state.projects`、`state.assets` |
+| `revision` | int64 | 比较交换版本；未创建状态时读取为 `{value:null,revision:0}`，每次成功写入递增 |
+| `updated_at` | datetime | 最近写入时间 |
+
+PUT 必须携带当前版本；旧版本返回 HTTP409，状态和墓碑均不发生部分更新。导入仅追加服务器没有的项目/素材 ID，已有 ID 的完整内容及未知字段以服务器为准；没有新 ID 时不推进该状态版本。
+
+### local_workspace_files
+
+原浏览器 `storageKey` 到不可变磁盘内容的索引。key 不参与磁盘路径拼接，原始媒体按 SHA256 去重保存到项目 `data/workspace/files/<哈希前两位>/<完整哈希>`。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `key` | string | 主键，保留原始图片/视频/音频 storageKey |
+| `sha256` | string | 小写 SHA256，索引，同内容的多个 key 可指向同一磁盘文件 |
+| `bytes` | int64 | 原始字节数 |
+| `mime_type` | string | 首次写入时的 Content-Type |
+| `created_at` | datetime | 首次上传时间 |
+
+相同 key、相同字节重复上传返回原记录；相同 key、不同内容返回 HTTP409。上传可用 `X-Content-SHA256` 校验客户端哈希。返回地址为 `/api/local-runtime/workspace/files/<编码后的 key>`。GET/HEAD 支持 Range、ETag、哈希和大小响应头；内联文档使用 `nosniff` 和 CSP sandbox。共享媒体没有通用物理删除接口，不因浏览器清理缓存自动回收。
+
+### local_workspace_migrations
+
+浏览器首次迁移的幂等记录，只有全部状态和迁移报告成功时才与共享状态一起提交。导入前核对清单及状态引用的本地媒体，包括实际磁盘长度和 SHA256；不存在的媒体、哈希不符、未关联 storageKey 的 Blob 地址均拒绝发布。`server:` 云存储引用沿用原存储接口。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `migration_id` | string | 主键，重复请求返回首次成功的原报告，不重复导入 |
+| `manifest` | text | 完整原始请求字节，包含浏览器备份和附加元数据，不重新序列化 |
+| `report` | text | 首次成功报告 JSON：迁移 ID、项目/素材总数、已校验文件数与字节数、两个状态版本 |
+| `archive_path` | text | `data/workspace/migrations` 下的独立目录，包含 `manifest.json` 和 `report.json`；目录名由 ID 哈希与随机 ID 组成 |
+| `created_at` | datetime | 成功迁移时间 |
+
+导入失败时两个状态及迁移记录整体回滚，并清理本次报告目录；已经上传的不可变媒体保留供重试。`GET /status` 返回当前项目/素材数量、媒体 key 数及总字节数、状态版本和绝对存储目录。媒体统计按 key 计数；相同内容复用的不同 key 只占一份磁盘内容。
+
+### local_workspace_tombstones
+
+PUT 删除实体时在同一事务中记录，阻止另一浏览器的旧数据首次迁移时复活已经移除的项目/素材。墓碑长期保留；持有新版本的正常 PUT 可有意恢复实体，例如画布撤销操作。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `name` | string | 状态名，与 `entity_path` 组成联合主键 |
+| `entity_path` | string | 含父 ID 的实体路径，例如 `/state/projects/<编码 ID>`；节点等嵌套 ID 也会记录，避免 ID 跨项目混淆 |
+| `created_at` | datetime | 首次移除时间 |
 
 ### users
 

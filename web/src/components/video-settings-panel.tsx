@@ -2,6 +2,7 @@
 
 import { type CSSProperties, type ReactNode } from "react";
 import { Input, Switch } from "antd";
+import { isLocalH3Model, LOCAL_H3_MAX_REFERENCES } from "@/lib/local-runtime";
 
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { useAutoDLWorkflow } from "@/hooks/use-autodl-workflow";
@@ -37,7 +38,7 @@ const secondOptions = [6, 10, 12, 16, 20];
 type VideoSettingsPanelProps = {
     config: AiConfig;
     modelName?: string;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoMode" | "videoNegativePrompt" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoMode" | "videoNegativePrompt" | "videoGenerateAudio" | "videoUpscale" | "videoWatermark", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -49,6 +50,32 @@ export function VideoSettingsPanel({ config, modelName, onConfigChange, theme, s
     const model = modelName || config.model || config.videoModel;
     const autodl = isAutoDLConfig(config, model);
     const { data: workflow } = useAutoDLWorkflow(config, model);
+    if (isLocalH3Model(model)) {
+        return <ImageSettingsTheme theme={theme}><div className={className} style={{ color: theme.node.text }}>
+            {showTitle ? <div className="text-sm font-medium">本机 H3 视频设置</div> : null}
+            <SettingGroup title="生成模式" color={theme.node.muted}><div className="grid grid-cols-2 gap-2.5">
+                <OptionPill selected={config.videoMode !== "ref2va"} theme={theme} onClick={() => onConfigChange("videoMode", "auto")}>自动 · 文生/首帧</OptionPill>
+                <OptionPill selected={config.videoMode === "ref2va"} disabled={model !== "local-h3-quality"} theme={theme} onClick={() => onConfigChange("videoMode", "ref2va")}>Ref2VA · 多参考</OptionPill>
+            </div></SettingGroup>
+            <SettingGroup title="分辨率" color={theme.node.muted}><div className="grid grid-cols-3 gap-2.5">
+                {["480", "720", "768"].map((value) => <OptionPill key={value} selected={config.vquality === value} theme={theme} onClick={() => onConfigChange("vquality", value)}>{value}p</OptionPill>)}
+            </div></SettingGroup>
+            <SettingGroup title="画幅" color={theme.node.muted}><div className="grid grid-cols-3 gap-2.5">
+                {["16:9", "9:16", "1:1"].map((value) => <OptionPill key={value} selected={config.size === value} theme={theme} onClick={() => onConfigChange("size", value)}>{value}</OptionPill>)}
+            </div></SettingGroup>
+            {!visualOnly ? <><SettingGroup title="秒数" color={theme.node.muted}><div className="grid grid-cols-3 gap-2.5">
+                {["5", "10", "15"].map((value) => <OptionPill key={value} selected={config.videoSeconds === value} theme={theme} onClick={() => onConfigChange("videoSeconds", value)}>{value}s</OptionPill>)}
+            </div></SettingGroup>
+            <AudioGenerationSetting checked={config.videoGenerateAudio === "true"} theme={theme} onChange={(checked) => onConfigChange("videoGenerateAudio", String(checked))} />
+            <SettingGroup title="视频超分" color={theme.node.muted}>
+                <SwitchRow label="生成后 2× 超分" checked={config.videoUpscale === "true"} theme={theme} onChange={(checked) => onConfigChange("videoUpscale", String(checked))} />
+                <div className="mt-1 text-xs" style={{ color: theme.node.muted }}>宽高翻倍，保留完整帧数与音频。480p 最长 15 秒；720p / 768p 最长 5 秒。超出限制会提示错误，请调整设置。</div>
+            </SettingGroup></> : null}
+            <div className="text-xs leading-5" style={{ color: theme.node.muted }}>{model === "local-h3-quality"
+                ? "Ref2VA 支持 1–" + LOCAL_H3_MAX_REFERENCES + " 张普通参考图。按引用顺序用 <Picture 1> 至 <Picture 9> 说明用途；也支持“图片1”等画布编号。自动模式下多图会使用 Ref2VA。"
+                : "支持文生视频或单张首帧。Ref2VA 多参考需要先选择“H3 品质成片”模型。"}任务使用本机显卡排队生成。</div>
+        </div></ImageSettingsTheme>;
+    }
     if (isAPIMartKlingV26Config(config, modelName || config.model || config.videoModel) || isAPIMartKlingV3Config(config, modelName || config.model || config.videoModel) || isKIEKlingV3Config(config, modelName || config.model || config.videoModel)) {
         return <KlingV26VideoSettingsPanel config={config} modelName={modelName} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} hideNegativePrompt={hideNegativePrompt} visualOnly={visualOnly} />;
     }

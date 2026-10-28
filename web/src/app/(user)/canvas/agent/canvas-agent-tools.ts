@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import { normalizeCompositionOptions } from "../utils/canvas-video-composition";
 
 import type { CanvasAgentPhase } from "../types";
 
@@ -26,6 +27,7 @@ export const CANVAS_AGENT_ACTION_NAMES = [
     "generate_image",
     "edit_image",
     "generate_video",
+    "compose_videos",
     "generate_audio",
     "get_media_task_status",
 ] as const;
@@ -125,6 +127,11 @@ export const CANVAS_AGENT_TOOLS: CanvasAgentToolDefinition[] = [
         { title: STRING, content: STRING, sourceNodeIds: STRING_ARRAY, projectTitle: STRING },
         ["title", "content", "projectTitle"],
     ),
+    defineTool("compose_videos", "按clips数组顺序裁剪并合成已有视频，在D盘保存并新增成片节点；返回提交状态，需查询实际完成。", {
+        title: STRING,
+        clips: { type: "array", minItems: 1, maxItems: 50, items: { type: "object", properties: { nodeId: STRING, startSeconds: { type: "number", minimum: 0 }, durationSeconds: { type: "number", minimum: 1 / 24 } }, required: ["nodeId", "durationSeconds"], additionalProperties: false } },
+        keepAudio: { type: "boolean" }, openingText: STRING, endingText: STRING, score: { type: "boolean" },
+    }, ["clips"]),
     defineTool(
         "create_text_node",
         "创建镜头、角色、产品、场景、声音说明和其他普通文本节点；不得用于首次正式主剧本。",
@@ -167,6 +174,7 @@ export const CANVAS_AGENT_TOOLS: CanvasAgentToolDefinition[] = [
             size: STRING,
             seconds: { type: "integer", minimum: -1, maximum: 30, description: "本次视频任务的总时长（秒），不是每个内部镜头的时长。按 videoDuration 的合法范围或离散值填写已确认时长；仅省略时使用当前 videoSeconds 默认值，不得把默认值当成上限。-1 仅用于支持智能时长的模型。" },
             generateAudio: { type: "boolean" },
+            referenceMode: { type: "string", enum: ["auto", "ref2va"], description: "本机 H3 品质档可选 ref2va，按 sourceNodeIds 中图片顺序提供 1–9 张普通参考图，并在完整提示词中用 <Picture 1> 至 <Picture 9> 标签逐项绑定。不能混用首尾帧、视频或独立音频参考。" },
         },
         ["prompt", "sourceNodeIds"],
     ),
@@ -297,6 +305,8 @@ export function normalizeCanvasAgentAction(name: unknown, args: unknown, id = na
             const seconds = boundedInteger(input.seconds, -1, 30);
             if (input.model !== undefined) optionalString(input.model);
             if (input.generateAudio !== undefined && typeof input.generateAudio !== "boolean") throw new Error("generateAudio 必须是布尔值");
+            const referenceMode = optionalString(input.referenceMode);
+            if (referenceMode && !["auto", "ref2va"].includes(referenceMode)) throw new Error("referenceMode 仅支持 auto 或 ref2va");
             normalized = {
                 prompt: requiredString(input.prompt, "prompt"),
                 ...(sourceNodeIds ? { sourceNodeIds } : {}),
@@ -304,9 +314,13 @@ export function normalizeCanvasAgentAction(name: unknown, args: unknown, id = na
                 ...(optionalString(input.size) ? { size: optionalString(input.size) } : {}),
                 ...(seconds !== undefined ? { seconds } : {}),
                 ...(typeof input.generateAudio === "boolean" ? { generateAudio: input.generateAudio } : {}),
+                ...(referenceMode ? { referenceMode } : {}),
             };
             break;
         }
+        case "compose_videos":
+            normalized = { ...normalizeCompositionOptions(input) };
+            break;
         case "generate_audio": {
             const sourceNodeIds = optionalStringArray(input.sourceNodeIds, "sourceNodeIds");
             normalized = {
@@ -402,6 +416,7 @@ export function canvasAgentActionLabel(action: CanvasAgentAction) {
         generate_image: "正在创建图片节点",
         edit_image: "正在创建图片编辑节点",
         generate_video: "正在创建视频节点",
+        compose_videos: "正在提交视频合成",
         generate_audio: "正在创建音频节点",
         get_media_task_status: "正在读取媒体任务",
     };

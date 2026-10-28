@@ -6,6 +6,7 @@ import { BrowserParameterTranslation, findParameterTranslation, normalizeTransla
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
 import { isMiniMaxH3Config, normalizeMiniMaxH3Duration, normalizeMiniMaxH3Ratio, normalizeMiniMaxH3Resolution } from "@/lib/minimax-video";
 import { modelChannelAttributionHeaders } from "@/lib/model-channel";
+import { isLocalH3Model, localH3VideoOptions, LOCAL_CHANNEL_ID, LOCAL_H3_MAX_REFERENCES } from "@/lib/local-runtime";
 import { dataUrlToGeminiInlineData, geminiActionUrl, geminiDirectHeaders, geminiErrorMessage, geminiOperationUrl, isGeminiConfig, isGeminiVideoModel } from "@/lib/gemini";
 import { isGeminiVeo31Model, normalizeGeminiVideoDuration, normalizeGeminiVideoRatio, normalizeGeminiVideoResolution } from "@/lib/gemini-video";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio } from "@/lib/seedance-video";
@@ -15,12 +16,13 @@ import { fetchAutoDLWorkflow } from "./autodl";
 import { isAgnesVideoV25Model, isCogVideoX3Model, isWan3VideoModel, modelKey, normalizeCogVideoX3Duration, supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
 import { resolveMediaUrl, uploadMediaFile, uploadRemoteMediaToServer } from "@/services/file-storage";
 import { autoSyncToCloud, imageToDataUrl, resolveImageUrl } from "@/services/image-storage";
+import { localWorkspaceEnabled } from "@/services/local-workspace";
 import { buildApiUrl, channelIdForActiveModel, channelProtocolForConfig, directAIProviderForConfig, localChannelForActiveModel, type AiConfig, type VideoElementReference } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-export type VideoResponse = { parameter_translation?: boolean; translationSnapshot?: LocalVideoTranslationSnapshot; id: string; task_id?: string; video_id?: string; source_id?: string; sourceId?: string; channelId?: string; userChannelId?: string; channelName?: string; workflowRef?: string; channel_id?: string; user_channel_id?: string; channel_name?: string; status?: string; video_url?: string; url?: string; storageKey?: string; progress?: number; error?: { message?: string }; size?: string; seconds?: string; model?: string; created_at?: string | number; createdAt?: string | number; started_at?: string | number; startedAt?: string | number; request_body?: string };
+export type VideoResponse = { reference_mode?: "auto" | "ref2va"; upscale?: boolean; source_video_id?: string; can_upscale?: boolean; parameter_translation?: boolean; translationSnapshot?: LocalVideoTranslationSnapshot; id: string; task_id?: string; video_id?: string; source_id?: string; sourceId?: string; channelId?: string; userChannelId?: string; channelName?: string; workflowRef?: string; channel_id?: string; user_channel_id?: string; channel_name?: string; status?: string; video_url?: string; url?: string; storageKey?: string; progress?: number; error?: { message?: string }; size?: string; seconds?: string; model?: string; created_at?: string | number; createdAt?: string | number; started_at?: string | number; startedAt?: string | number; request_body?: string };
 type ApiVideoEnvelope = { code: number; data?: VideoResponse | VideoResponse[] | null; msg?: string; message?: string };
 type ApiVideoResponse = VideoResponse | ApiVideoEnvelope;
 export type VideoGenerationResult = { id: string; url: string; durationMs: number; width: number; height: number; bytes: number; mimeType: string; task: VideoResponse };
@@ -41,6 +43,7 @@ export class VideoRequestError extends Error {
 }
 
 function usesAccountProxy(config: AiConfig) {
+    if (config.channelMode === "local" && localChannelForActiveModel(config)?.id === LOCAL_CHANNEL_ID) return false;
     const token = useUserStore.getState().token;
     return config.channelMode === "remote" || (config.channelMode === "local" && Boolean(token));
 }
@@ -138,7 +141,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         if (accountProxy) createOptions.onServerTask?.();
         const created = directProvider
             ? await (await import("@/services/api/direct-ai")).createDirectVideoTask(config, directProvider, body, createOptions.signal)
-            : unwrapVideoResponseForConfig(config, model, (await axios.post<ApiVideoResponse>(createUrl, requestBody, { headers, signal: accountProxy ? undefined : createOptions.signal })).data);
+            : unwrapVideoResponseForConfig(config, model, (await axios.post<ApiVideoResponse>(createUrl, requestBody, { headers, signal: accountProxy || isLocalH3Model(model) ? undefined : createOptions.signal })).data);
         if (!created.id && !created.video_id) throw new Error("视频接口没有返回任务 ID");
         refreshRemoteUser(config);
         const task = await syncGeneratedVideo(created, config);
@@ -295,6 +298,26 @@ export async function pollVideoGenerationTaskStatus(config: AiConfig, task: Vide
     return syncGeneratedVideo(result.parameter_translation ? result : await cacheProtectedGeminiVideo(config, model, await cacheProtectedVideo(config, model, result)), config, true);
 }
 
+export async function cancelLocalVideoTask(config: AiConfig, taskId: string) {
+    const response = await axios.delete<VideoResponse>(aiApiUrl(config, `/videos/${encodeURIComponent(taskId)}`), { headers: aiHeaders(config) });
+    if (!["failed", "completed", "processing"].includes(response.data.status || "")) throw new Error("本机视频任务尚未确认停止，请重试");
+    return response.data;
+}
+
+export async function createLocalVideoUpscaleTask(config: AiConfig, taskId: string): Promise<CreatedVideoGenerationTask> {
+    if (!isLocalH3Model(config.model || config.videoModel) || usesAccountProxy(config)) throw new VideoRequestError("请选择本机 H3 原片进行 2× 超分");
+    const startedAt = Date.now();
+    try {
+        // Keep submission alive so Stop can wait for, and cancel, the real studio task.
+        const response = await axios.post<VideoResponse>(aiApiUrl(config, `/videos/${encodeURIComponent(taskId)}/upscale`), {}, { headers: aiHeaders(config) });
+        if (!response.data.id) throw new VideoRequestError("超分接口没有返回任务 ID", response.data);
+        return { task: response.data, pollId: response.data.id, startedAt, requestBody: { source_video_id: taskId, upscale: true } };
+    } catch (error) {
+        const { message, detail } = readAxiosError(error, "视频超分失败");
+        throw new VideoRequestError(message, detail);
+    }
+}
+
 function videoSyncKey(config: AiConfig, task: VideoResponse) {
     const channelId = config.channelMode === "remote" ? channelIdForActiveModel(config) : localChannelForActiveModel(config)?.id;
     return `${config.channelMode}:${channelId || config.baseUrl}:${task.id}:${task.task_id || ""}:${task.video_id || ""}`;
@@ -303,6 +326,12 @@ function videoSyncKey(config: AiConfig, task: VideoResponse) {
 async function syncGeneratedVideo(task: VideoResponse, config: AiConfig, contentResolved = false): Promise<VideoResponse> {
     const url = task.video_url || task.url || "";
     if (task.storageKey || isFailedVideoStatus(task.status) || (!isCompletedVideoStatus(task.status) && !url)) return task;
+    if (url && isCompletedVideoStatus(task.status) && isLocalH3Model(config.model || config.videoModel) && await localWorkspaceEnabled()) {
+        const response = await fetch(url);
+        if (!response.ok) throw new VideoRequestError(`本机视频保存失败：${response.status}`, task);
+        const media = await uploadMediaFile(await response.blob(), "generated-video", `video:local:${task.id}`);
+        return { ...task, url: media.url, video_url: media.url, storageKey: media.storageKey };
+    }
     if (task.parameter_translation && !url) return cacheProtectedVideo(config, config.model || config.videoModel, task);
     const media = task.parameter_translation && url.startsWith("data:video/")
         ? await uploadMediaFile(url, "generated-video", `video:${videoSyncKey(config, task)}`)
@@ -393,6 +422,25 @@ async function createAgnesVideoV25RequestBody(config: AiConfig, model: string, p
 }
 
 async function createVideoRequestBody(config: AiConfig, model: string, prompt: string, input: Required<VideoReferenceInput>) {
+    if (isLocalH3Model(model)) {
+        if (input.videoReferences.length || input.audioReferences.length || input.lastFrame) throw new VideoRequestError("本机 H3 不支持尾帧、视频或独立音频参考");
+        const native = config.videoMode === "ref2va" || input.references.length > 1 || /<Picture \d+>/.test(prompt);
+        if (native) {
+            if (model !== "local-h3-quality") throw new VideoRequestError("Ref2VA 需要选择 H3 品质成片模型，不支持 Turbo 档");
+            if (input.firstFrame) throw new VideoRequestError("Ref2VA 不能混用首帧绑定，请将图片作为普通参考图连接");
+            if (input.references.length < 1 || input.references.length > LOCAL_H3_MAX_REFERENCES) throw new VideoRequestError("Ref2VA 需要 1–" + LOCAL_H3_MAX_REFERENCES + " 张参考图");
+            const nativePrompt = prompt.replace(/图片\s*(\d+)/g, (_, index) => "<Picture " + index + ">");
+            const tags = new Set(Array.from(nativePrompt.matchAll(/<Picture (\d+)>/g), (match) => Number(match[1])));
+            if (tags.size !== input.references.length || Array.from(tags).some((index) => index < 1 || index > input.references.length))
+                throw new VideoRequestError("请按参考图顺序使用 <Picture 1> 至 <Picture " + LOCAL_H3_MAX_REFERENCES + ">，数量须与图片一致");
+            return { model, prompt: nativePrompt, ...localH3VideoOptions(config), reference_mode: "ref2va",
+                input_reference: await Promise.all(input.references.map(imageToDataUrl)) };
+        }
+        const frames = [...(input.firstFrame ? [input.firstFrame] : []), ...input.references];
+        if (frames.length > 1) throw new VideoRequestError("请只指定一张首帧；多参考生成请使用品质档 Ref2VA，解除首帧绑定");
+        return { model, prompt, ...localH3VideoOptions(config),
+            ...(frames.length ? { first_frame_url: await imageToDataUrl(frames[0]) } : {}) };
+    }
     if (videoChannelProtocol(config, model) === "autodl") {
         const capabilities = getAutoDLCapabilities(await fetchAutoDLWorkflow(autoDLBaseUrl(config, model), model));
         if (!capabilities) throw new VideoRequestError("当前 AutoDL 工作流尚未适配");

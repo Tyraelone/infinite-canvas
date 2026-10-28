@@ -32,6 +32,7 @@ export const VIDEO_SKILL = String.raw`
 - size：默认读取当前画布 Agent videoSize；只有用户明确本次覆盖时传入。不得使用图片 imageSize。
 - seconds：必须来自用户明确选择、镜头规划或全局 videoSeconds，并通过当前模型校验。
 - generateAudio：视频文件是否直接生成声音；只有当前模型支持时可为 true。
+- referenceMode：本机 H3 品质档的原生多参考生成使用 ref2va；最多 9 张真实图片，按 sourceNodeIds 中图片顺序对应 <Picture 1> 至 <Picture 9>，在 prompt 中逐项说明职责。单张也可明确使用 ref2va。不要先合成 Qwen 首帧，不混用首尾帧、视频或独立音频参考；Turbo 不支持，应提示用户切换到本机 H3 品质成片。
 
 工具成功后会创建真实 video 节点并沿用现有任务、轮询和上游地址。
 

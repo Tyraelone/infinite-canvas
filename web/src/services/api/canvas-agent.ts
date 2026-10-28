@@ -96,9 +96,14 @@ class CanvasAgentRequestError extends Error {
     }
 }
 
-type CanvasAgentAiConfig = AiConfig & { textReasoningEnabled?: boolean; textStreaming?: boolean };
+type CanvasAgentAiConfig = AiConfig & { textReasoningEnabled?: boolean; textReasoningEffort?: string; textStreaming?: boolean };
 
 function applyCanvasAgentReasoning(body: Record<string, unknown>, config: CanvasAgentAiConfig, mode: "chat" | "responses" | "gemini") {
+    if (config.textReasoningEffort && mode !== "gemini") {
+        if (mode === "responses") body.reasoning = { effort: config.textReasoningEffort };
+        else body.reasoning_effort = config.textReasoningEffort;
+        return;
+    }
     if (!config.textReasoningEnabled) return;
     if (mode === "responses") body.reasoning = { effort: "high" };
     else if (mode === "gemini") body.generationConfig = { ...((body.generationConfig as Record<string, unknown> | undefined) || {}), thinkingConfig: config.model.toLowerCase().includes("2.5") ? { thinkingBudget: -1 } : { thinkingLevel: "high" } };

@@ -171,6 +171,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         videoMultiShot: node.metadata?.multiShot || globalConfig.videoMultiShot || defaultConfig.videoMultiShot,
         videoShotType: node.metadata?.shotType || globalConfig.videoShotType || defaultConfig.videoShotType,
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
+        videoUpscale: node.metadata?.upscale || globalConfig.videoUpscale || defaultConfig.videoUpscale,
         videoCharacterOrientation: node.metadata?.characterOrientation || globalConfig.videoCharacterOrientation || defaultConfig.videoCharacterOrientation,
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
@@ -213,6 +214,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoMultiShot") return { multiShot: value };
     if (key === "videoShotType") return { shotType: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
+    if (key === "videoUpscale") return { upscale: value };
     if (key === "videoCharacterOrientation") return { characterOrientation: value };
     if (key === "videoWatermark") return { watermark: value };
     return { [key]: value };

@@ -59,7 +59,7 @@ export function CanvasAssistantComposer({
     const effectiveConfig = useEffectiveConfig();
     const reasoningEnabled = agentConfig.textReasoningEnabled === true;
     const imageConfig = useMemo(() => ({ ...effectiveConfig, quality: agentConfig.imageQuality, size: agentConfig.imageSize }), [agentConfig.imageQuality, agentConfig.imageSize, effectiveConfig]);
-    const videoConfig = useMemo(() => ({ ...effectiveConfig, activeChannelId: effectiveConfig.videoChannelId || effectiveConfig.activeChannelId, vquality: agentConfig.videoQuality, size: agentConfig.videoSize }), [agentConfig.videoQuality, agentConfig.videoSize, effectiveConfig]);
+    const videoConfig = useMemo(() => ({ ...effectiveConfig, activeChannelId: effectiveConfig.videoChannelId || effectiveConfig.activeChannelId, vquality: agentConfig.videoQuality, size: agentConfig.videoSize, videoMode: agentConfig.videoMode || effectiveConfig.videoMode }), [agentConfig.videoQuality, agentConfig.videoSize, agentConfig.videoMode, effectiveConfig]);
     const promptReferences = useMemo(() => {
         const seen = new Set<string>();
         return [...(availableReferences || []), ...references.map(assistantToPromptReference)].filter((reference) => {
@@ -124,6 +124,7 @@ export function CanvasAssistantComposer({
                             onConfigChange={(key, value) => {
                                 if (key === "vquality") onAgentConfigChange({ videoQuality: value });
                                 else if (key === "size") onAgentConfigChange({ videoSize: value });
+                                else if (key === "videoMode") onAgentConfigChange({ videoMode: value });
                             }}
                         />
                     </div>

@@ -7,6 +7,7 @@ import { Button, Modal, Tooltip } from "antd";
 import { ModelPicker } from "@/components/model-picker";
 import { useAutoDLWorkflow } from "@/hooks/use-autodl-workflow";
 import { getAutoDLCapabilities, isAutoDLConfig } from "@/lib/autodl";
+import { canUpscaleLocalH3Video } from "@/lib/local-runtime";
 import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -33,6 +34,7 @@ type CanvasNodePromptPanelProps = {
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeData["metadata"]>) => void;
     onGenerate: (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => void;
     onStop: (nodeId: string) => void;
+    onUpscaleVideo: (nodeId: string) => void;
     mentionReferences?: CanvasResourceReference[];
     connectedNodes?: CanvasNodeData[];
     onDisconnectReference?: (fromNodeId: string, toNodeId: string) => void;
@@ -42,7 +44,7 @@ type CanvasNodePromptPanelProps = {
     onImageSettingsOpenChange?: (open: boolean) => void;
 };
 
-export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, mentionReferences = [], connectedNodes = [], videoFrameOptions = [], videoResourceOptions = [], onDisconnectReference, onStartReferenceSelection, onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
+export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onStop, onUpscaleVideo, mentionReferences = [], connectedNodes = [], videoFrameOptions = [], videoResourceOptions = [], onDisconnectReference, onStartReferenceSelection, onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
     const modelCosts = useConfigStore((state) => state.publicSettings?.modelChannel.modelCosts);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
@@ -129,6 +131,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                         <>
                             <ModelPicker className="!w-[180px] !min-w-0 !shrink-0" config={config} value={config.model} channelId={config.videoChannelId} workflowRef={node.metadata?.workflowRef} onWorkflowChange={(workflowRef) => onConfigChange(node.id, { workflowRef })} onChange={(model, channelId) => onConfigChange(node.id, { model, channelId })} capability="video" onMissingConfig={() => openConfigDialog(true)} />
                             <CanvasVideoSettingsPopover config={config} buttonClassName="!h-10 !w-[148px] !shrink-0 !justify-start !rounded-full !px-3" frameOptions={videoFrameOptions} resourceOptions={videoResourceOptions} metadata={node.metadata} firstFrameNodeId={node.metadata?.firstFrameNodeId} lastFrameNodeId={node.metadata?.lastFrameNodeId} onFrameChange={(patch) => onConfigChange(node.id, patch)} onMetadataChange={(patch) => onConfigChange(node.id, patch)} onConfigChange={(key, value) => onConfigChange(node.id, videoConfigPatch(key, value))} />
+                            {canUpscaleLocalH3Video(node.metadata) ? <Tooltip title="为原片创建独立超分节点；480p 最长15秒，720p/768p 最长5秒，保留完整帧数与音频"><Button type="text" className="!h-10 !shrink-0 !rounded-full !px-3" style={{ color: theme.node.text }} disabled={generating} icon={<Maximize2 className="size-3.5" />} onClick={() => onUpscaleVideo(node.id)}>2× 超分</Button></Tooltip> : null}
                         </>
                     ) : mode === "audio" ? (
                         <>
@@ -207,6 +210,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         videoMultiShot: node.metadata?.multiShot || globalConfig.videoMultiShot || defaultConfig.videoMultiShot,
         videoShotType: node.metadata?.shotType || globalConfig.videoShotType || defaultConfig.videoShotType,
         videoGenerateAudio: node.metadata?.generateAudio || globalConfig.videoGenerateAudio || defaultConfig.videoGenerateAudio,
+        videoUpscale: node.metadata?.upscale || globalConfig.videoUpscale || defaultConfig.videoUpscale,
         videoCharacterOrientation: node.metadata?.characterOrientation || globalConfig.videoCharacterOrientation || defaultConfig.videoCharacterOrientation,
         videoWatermark: node.metadata?.watermark || globalConfig.videoWatermark || defaultConfig.videoWatermark,
         audioVoice: node.metadata?.audioVoice || globalConfig.audioVoice || defaultConfig.audioVoice,
@@ -242,6 +246,7 @@ function videoConfigPatch(key: keyof AiConfig, value: string) {
     if (key === "videoMultiShot") return { multiShot: value };
     if (key === "videoShotType") return { shotType: value };
     if (key === "videoGenerateAudio") return { generateAudio: value };
+    if (key === "videoUpscale") return { upscale: value };
     if (key === "videoCharacterOrientation") return { characterOrientation: value };
     if (key === "videoWatermark") return { watermark: value };
     return { [key]: value };

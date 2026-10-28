@@ -7,6 +7,8 @@ data/
 /director/
 *.log
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 web/public/InfiniteCanvas-ComfyBridge*
 .DS_Store
 .idea

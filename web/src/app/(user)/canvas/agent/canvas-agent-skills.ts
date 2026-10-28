@@ -43,6 +43,7 @@ export function buildCanvasAgentSkillPrompt(phase: CanvasAgentPhase, userText: s
         const wantsVideo =
             phase === "video" ||
             selectedTypes.has("video") ||
+            /ref2va|原生多参考/i.test(intent) ||
             /生成视频|做视频|视频生成|文生视频|图生视频|让.+动起来|动画化|渲染镜头|生成片段|视频续写|续写视频|编辑视频|修改视频|重绘视频|运镜|一镜到底/.test(intent);
         const wantsExtension =
             wantsVideo &&

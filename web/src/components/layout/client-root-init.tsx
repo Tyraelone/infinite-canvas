@@ -11,6 +11,8 @@ import { STORAGE_SYNC_FAILED_EVENT, defaultUserStorageProvider, defaultUserWebDA
 import { defaultConfig, useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 import { useChannelTranslationStore } from "@/stores/use-channel-translation-store";
+import { initializeLocalRuntime } from "@/services/api/local-runtime";
+import { LocalWorkspaceStatus } from "@/components/layout/local-workspace-status";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
@@ -41,6 +43,10 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     useEffect(() => {
         void loadPublicSettings();
     }, [loadPublicSettings]);
+
+    useEffect(() => {
+        void initializeLocalRuntime().catch(() => undefined);
+    }, [token, user?.id]);
 
     useEffect(() => {
         if (!isLoginPage) void hydrateUser();
@@ -96,6 +102,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
 						.forEach(([key, value]) => updateConfig(key as keyof AiConfig, value as never));
 				}
 				updateConfig("workflowSyncTouched", workflowsReady);
+				await initializeLocalRuntime();
 				updateConfig("syncStorageConfig", syncS3);
                 updateConfig("syncWebDAVStorageConfig", syncWebDAV);
                 if (syncS3 && payload.storageProvider?.s3) {
@@ -143,5 +150,5 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         openConfigDialog(false);
     }, [message, openConfigDialog, publicSettings, updateConfig]);
 
-    return <>{children}</>;
+    return <><LocalWorkspaceStatus />{children}</>;
 }

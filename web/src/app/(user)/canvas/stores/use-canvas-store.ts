@@ -6,6 +6,7 @@ import { localForageStorage } from "@/lib/localforage-storage";
 import { listCanvasProjects, saveCanvasProject, syncCanvasProjects } from "@/services/api/canvas-tasks";
 import { fetchUserConfig } from "@/services/api/user-config";
 import { useUserStore } from "@/stores/use-user-store";
+import { localWorkspaceActive, localWorkspaceEnabled, writeWorkspaceState } from "@/services/local-workspace";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasAgentConfig, CanvasAssistantSession, CanvasConnection, CanvasNodeData, CanvasPendingAgentRequest, ViewportTransform } from "../types";
 
@@ -51,6 +52,12 @@ type CanvasStore = {
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
+export async function saveCanvasNodesNow(projectId: string, nodes: CanvasNodeData[]) {
+    useCanvasStore.getState().updateProject(projectId, { nodes });
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    const value = { state: { projects: useCanvasStore.getState().projects }, version: useCanvasStore.persist.getOptions().version || 0 };
+    if (!await writeWorkspaceState(CANVAS_STORE_KEY, JSON.stringify(value), true)) throw new Error("无法确认本机画布保存");
+}
 type PersistedCanvasState = Pick<CanvasStore, "projects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
@@ -76,6 +83,7 @@ function waitForUserStoreHydration() {
 }
 
 async function flushProjectSave(id: string) {
+    if (await localWorkspaceEnabled()) return;
     if (savingProjects.has(id) || projectSaveTimers.has(id)) return;
     const pending = pendingProjectSaves.get(id);
     pendingProjectSaves.delete(id);
@@ -88,6 +96,7 @@ async function flushProjectSave(id: string) {
 }
 
 function queueProjectSave(project: CanvasProject) {
+    if (localWorkspaceActive()) return;
     const token = useUserStore.getState().token;
     const previous = projectSaveTimers.get(project.id);
     if (previous) clearTimeout(previous);
@@ -167,6 +176,10 @@ const canvasStorage: PersistStorage<CanvasStore> = {
             : null;
         const localProjects =
             (localParsed?.state as PersistedCanvasState)?.projects || [];
+        if (localWorkspaceActive()) {
+            if (localParsed) queuedPersistState = localParsed.state as PersistedCanvasState;
+            return localParsed;
+        }
         const localHasData =
             Array.isArray(localProjects) && localProjects.length > 0;
 
@@ -349,6 +362,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 queueProjectSave(nextProject);
             },
             syncWithRemote: async (token, syncEnabled) => {
+                if (await localWorkspaceEnabled()) return;
                 accountCanvasSyncEnabled = syncEnabled;
                 if (!syncEnabled) return;
                 const localProjects = get().projects;
@@ -361,6 +375,7 @@ export const useCanvasStore = create<CanvasStore>()(
                     remoteProjects,
                     localProjects,
                 );
+                if (await localWorkspaceEnabled()) return;
                 if (saveTimer) {
                     clearTimeout(saveTimer);
                     saveTimer = null;
@@ -374,6 +389,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 );
             },
             setSyncEnabled: (enabled) => {
+                if (localWorkspaceActive()) return;
                 accountCanvasSyncEnabled = enabled;
             },
         }),

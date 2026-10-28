@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net"
 
 	"github.com/tigerowo/infinite-canvas/config"
 	"github.com/tigerowo/infinite-canvas/handler"
@@ -23,5 +24,5 @@ func main() {
 	service.StartCanvasProjectCleanupScheduler()
 	handler.StartVideoTaskPoller()
 	service.WakeComfyBridgePoller()
-	log.Fatal(router.New().Run(":" + config.Cfg.Port))
+	log.Fatal(router.New().Run(net.JoinHostPort(config.Cfg.ListenHost, config.Cfg.Port)))
 }

@@ -7,6 +7,8 @@ import { deleteAnonymousStorageFile, uploadAnonymousStorageFile } from "@/servic
 import { apiGet } from "@/services/api/request";
 import { autoSyncToCloud, canUseGlobalStorage, clearAutoSyncCache, getProxyUrl, loadUserStorageProvider, toProviderPayload, type StorageConfig, type UserWebDAVStorageProvider } from "@/services/image-storage";
 import { useUserStore } from "@/stores/use-user-store";
+import { ensureLocalWorkspace, loadWorkspaceBlob, localWorkspaceEnabled, saveWorkspaceBlob } from "@/services/local-workspace";
+import { workspaceFileUrl } from "@/lib/local-workspace";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
@@ -16,6 +18,13 @@ let storageConfigPromise: Promise<StorageConfig> | null = null;
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file", syncId?: string, tokenOverride?: string): Promise<UploadedFile> {
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    if (await localWorkspaceEnabled()) {
+        const storageKey = syncId && /^video:local:[a-f0-9]{32}$/.test(syncId) ? syncId : `${prefix}:${nanoid()}`;
+        const url = await saveWorkspaceBlob(storageKey, blob);
+        if (!url) throw new Error("本机媒体保存失败");
+        const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : {};
+        return { url, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
+    }
     const uploaded = await autoSyncToCloud(syncId || blob, async () => {
         const metadataUrl = blob.type.startsWith("video/") ? URL.createObjectURL(blob) : undefined;
         try {
@@ -34,6 +43,7 @@ export async function uploadMediaFile(input: string | Blob, prefix = "file", syn
 }
 
 export async function uploadAssetMediaFile(file: File, prefix = "asset-media"): Promise<UploadedFile> {
+    if (await localWorkspaceEnabled()) return uploadMediaFile(file, prefix);
     try {
         return await uploadMediaBlobToServer(file, file.name || `${prefix}-${nanoid()}`);
     } catch (error) {
@@ -66,6 +76,7 @@ export async function uploadRemoteMediaToServer(url: string, filename: string): 
 }
 
 async function uploadMediaBlobToServer(blob: Blob, filename: string, metadataUrl?: string, tokenOverride?: string): Promise<UploadedFile> {
+    if (await localWorkspaceEnabled()) return uploadMediaFile(blob);
     const config = await loadStorageConfig().catch(() => null);
     if (tokenOverride !== undefined && useUserStore.getState().token !== tokenOverride) {
         throw new Error("登录状态已变化");
@@ -121,6 +132,7 @@ export async function uploadMediaBlob(blob: Blob, filename: string): Promise<Upl
 
 export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
+    if (await ensureLocalWorkspace()) return workspaceFileUrl(storageKey);
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
     const blob = await store.getItem<Blob>(storageKey).catch(() => null);
@@ -157,10 +169,14 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
 }
 
 export async function getMediaBlob(storageKey: string) {
+    const shared = await loadWorkspaceBlob(storageKey);
+    if (shared !== undefined) return shared;
     return store.getItem<Blob>(storageKey);
 }
 
 export async function setMediaBlob(storageKey: string, blob: Blob) {
+    const shared = await saveWorkspaceBlob(storageKey, blob);
+    if (shared !== undefined) return shared;
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
@@ -205,6 +221,7 @@ async function deleteServerMedia(storageKey: string) {
 }
 
 export async function deleteStoredMedia(keys: Iterable<string>) {
+    if (await localWorkspaceEnabled()) return;
     const { useAssetStore } = await import("@/stores/use-asset-store");
     const assetKeys = new Set(
         useAssetStore.getState().assets
@@ -228,6 +245,7 @@ export async function deleteStoredMedia(keys: Iterable<string>) {
 }
 
 export async function cleanupUnusedMedia(usedData: unknown) {
+    if (await localWorkspaceEnabled()) return;
     const usedKeys = collectMediaStorageKeys(usedData);
     const unused: string[] = [];
     await store.iterate((_value, key) => {

@@ -1,6 +1,7 @@
 import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
 import { apiGet, apiPost } from "@/services/api/request";
 import { useUserStore } from "@/stores/use-user-store";
+import { localWorkspaceEnabled } from "@/services/local-workspace";
 
 export async function listCanvasProjects(token: string) {
     return apiGet<CanvasProject[]>("/api/v1/canvas/projects", undefined, token);
@@ -35,6 +36,7 @@ export async function stopCanvasTask(kind: "image" | "video" | "audio", id: stri
 }
 
 export async function deleteCanvasProjects(ids: string[]) {
+    if (await localWorkspaceEnabled()) return;
     const token = useUserStore.getState().token;
     const projectIds = Array.from(
         new Set(ids.map((id) => id.trim()).filter(Boolean)),

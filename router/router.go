@@ -12,6 +12,7 @@ func New() *gin.Engine {
 	router := gin.Default()
 	router.RedirectTrailingSlash = false
 	_ = router.SetTrustedProxies(nil)
+	handler.RegisterLocalWorkspaceRoutes(router)
 	api := router.Group("/api")
 	api.GET("/health", func(c *gin.Context) {
 		c.String(http.StatusOK, "ok")

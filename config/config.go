@@ -12,6 +12,7 @@ import (
 )
 
 type Config struct {
+	ListenHost          string `env:"LISTEN_HOST"`
 	Port                string `env:"PORT" envDefault:"8080"`
 	AdminUsername       string `env:"ADMIN_USERNAME" envDefault:"admin"`
 	AdminPassword       string `env:"ADMIN_PASSWORD" envDefault:"infinite-canvas"`

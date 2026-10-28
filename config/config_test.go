@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func TestLoadHonorsLocalListenHost(t *testing.T) {
+	previous := Cfg
+	t.Cleanup(func() { Cfg = previous })
+	t.Setenv("LISTEN_HOST", "127.0.0.1")
+	if err := Load(); err != nil {
+		t.Fatal(err)
+	}
+	if Cfg.ListenHost != "127.0.0.1" {
+		t.Fatalf("ListenHost = %q, want loopback", Cfg.ListenHost)
+	}
+}
+
 func TestNormalizeDockerSQLiteDSNUsesMountedDataDir(t *testing.T) {
 	previous := Cfg
 	t.Cleanup(func() { Cfg = previous })

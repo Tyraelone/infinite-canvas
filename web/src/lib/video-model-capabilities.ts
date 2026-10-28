@@ -64,6 +64,7 @@ export function supportsVideoFrameReferences(modelName: string, protocol = "") {
 
 export function supportsVideoAudioGeneration(modelName: string) {
     const model = modelKey(modelName);
+    if (model === "local-h3-turbo" || model === "local-h3-quality") return true;
     if (model.includes("motion-control")) return false;
     return (
         isCogVideoX3Model(model) ||

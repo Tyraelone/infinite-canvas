@@ -54,6 +54,9 @@ export type CanvasNodeMetadata = {
     mode?: string;
     negativePrompt?: string;
     generateAudio?: string;
+    upscale?: string;
+    canUpscale?: boolean;
+    sourceVideoTaskId?: string;
     characterOrientation?: string;
     watermark?: string;
     audioVoice?: string;
@@ -96,6 +99,10 @@ export type CanvasNodeMetadata = {
     audioTaskId?: string;
     audioTaskResultId?: string;
     videoTaskId?: string;
+    compositionTaskId?: string;
+    compositionOptions?: import("@/services/api/video-composition").CompositionOptions;
+    compositionStage?: string;
+    compositionDurationSeconds?: number;
     videoTaskVideoId?: string;
     videoTaskTranslation?: import("@/services/api/video").VideoResponse["translationSnapshot"];
     firstFrameNodeId?: string;
@@ -219,6 +226,7 @@ export type CanvasAgentConfig = {
     imageSize: string;
     videoQuality: string;
     videoSize: string;
+    videoMode?: string;
 };
 
 export type CanvasAgentState = {

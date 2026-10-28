@@ -36,7 +36,10 @@ import {
     type CanvasAgentToolResult,
 } from "./canvas-agent-tools";
 
-const MAX_AGENT_STEPS = 12;
+const MAX_AGENT_STEPS = 48;
+const READ_ONLY_ACTIONS = new Set(["get_canvas_summary", "get_selected_nodes", "query_canvas_nodes", "get_node",
+    "get_upstream_nodes", "get_downstream_nodes", "get_connected_nodes", "get_generation_config",
+    "get_generation_task", "get_media_task_status", "read_skill_file"]);
 
 export type CanvasAgentRuntimeEvent = {
     status: CanvasAssistantMessageStatus;
@@ -89,6 +92,9 @@ export async function runCanvasAgent(input: RunCanvasAgentInput): Promise<RunCan
     let hasExecutedActions = false;
     let protocolError: string | undefined;
     let expectedAction = false;
+    const readResults = new Map<string, { result: string; count: number }>();
+    let loopWarning = "";
+    let finalReason = "";
     let protocolMessages: CanvasAgentProtocolMessage[] = [
         ...input.protocolMessages,
         { role: "user" as const, content: buildUserContent(input.userText, input.references, input.config.textModel || input.config.model) },
@@ -123,23 +129,28 @@ export async function runCanvasAgent(input: RunCanvasAgentInput): Promise<RunCan
         return true;
     };
 
-    for (let step = 0; step < MAX_AGENT_STEPS; step++) {
+    for (let step = 0; step <= MAX_AGENT_STEPS; step++) {
         throwIfAborted(input.signal);
+        if (step === MAX_AGENT_STEPS) finalReason = "本轮制作步骤已较多，已保存阶段成果。";
+        const finalizing = Boolean(finalReason);
+        const executionHint = finalizing
+            ? "\n\n【结束本轮】\n" + finalReason + " 本轮不再执行工具。请只用简短文字总结真实完成的工作、仍在等待的任务或阻塞原因；不要声称未执行的修改已完成，不要让用户反复发送“继续”重试相同读取。"
+            : loopWarning;
         input.onEvent?.({ status: "thinking", label: step ? "正在根据画布结果继续" : "正在理解画布和创作目标" });
         const context = input.getContext(state);
-        let systemPrompt = buildCanvasAgentSkillPrompt(state.phase, input.userText, context, activeSkillContents, contextCheckpoint, skillFileToolAvailable);
-        const nativeTools = toolMode === "native";
+        let systemPrompt = buildCanvasAgentSkillPrompt(state.phase, input.userText, context, activeSkillContents, contextCheckpoint, skillFileToolAvailable) + executionHint;
+        const nativeTools = !finalizing && toolMode === "native";
         const tools = nativeTools ? agentTools : [];
         if (estimateCanvasAgentInputTokens({ systemPrompt: canvasAgentSystemPrompt(input.config, systemPrompt, nativeTools ? [] : agentTools, nativeTools), messages: protocolMessages, tools }, canvasAgentTokenCalibrationKey(input.config)) >= MAX_AGENT_INPUT_TOKENS) {
-            if (await compactHistory()) systemPrompt = buildCanvasAgentSkillPrompt(state.phase, input.userText, context, activeSkillContents, contextCheckpoint, skillFileToolAvailable);
+            if (await compactHistory()) systemPrompt = buildCanvasAgentSkillPrompt(state.phase, input.userText, context, activeSkillContents, contextCheckpoint, skillFileToolAvailable) + executionHint;
         }
 
         const requestTurn = () => requestCanvasAgentTurn({
             config: input.config,
             systemPrompt,
             messages: protocolMessages,
-            tools: agentTools,
-            toolMode,
+            tools: finalizing ? [] : agentTools,
+            toolMode: finalizing ? "prompt-json" : toolMode,
             signal: input.signal,
         });
         let turn: Awaited<ReturnType<typeof requestCanvasAgentTurn>>;
@@ -147,7 +158,7 @@ export async function runCanvasAgent(input: RunCanvasAgentInput): Promise<RunCan
             turn = await requestTurn();
         } catch (error) {
             if (!isCanvasAgentContextLimitError(error) || !(await compactHistory())) throw error;
-            systemPrompt = buildCanvasAgentSkillPrompt(state.phase, input.userText, context, activeSkillContents, contextCheckpoint, skillFileToolAvailable);
+            systemPrompt = buildCanvasAgentSkillPrompt(state.phase, input.userText, context, activeSkillContents, contextCheckpoint, skillFileToolAvailable) + executionHint;
             turn = await requestTurn();
         }
         toolMode = turn.toolMode;
@@ -159,6 +170,13 @@ export async function runCanvasAgent(input: RunCanvasAgentInput): Promise<RunCan
         }
 
         const parsedJson = await parseCanvasAgentJson(turn.content, { allowRepair: toolMode !== "native" });
+        if (finalizing) {
+            const summary = (parsedJson.parsed ? parsedJson.reply : turn.content).trim();
+            const reply = !turn.toolCalls.length && !parsedJson.actions.length && summary ? summary
+                : finalReason + " 当前节点和任务已保留，本轮未执行其他操作。";
+            protocolMessages = [...protocolMessages, { role: "assistant", content: reply }];
+            return { reply, state, protocolMessages: persistCanvasAgentProtocolMessages(protocolMessages), contextCheckpoint, jsonFallbackMode: usedJsonFallbackMode };
+        }
         if (toolMode !== "native" && parsedJson.parsed) usedJsonFallbackMode = toolMode;
         const assistantToolMessage: CanvasAgentProtocolMessage = {
             role: "assistant",
@@ -243,6 +261,21 @@ export async function runCanvasAgent(input: RunCanvasAgentInput): Promise<RunCan
         const results = await executeActions(actions, state, input.executeAction, input.signal, input.onEvent);
         hasExecutedActions = true;
         state = results.state;
+        if (results.items.some(({ action, result }) => !READ_ONLY_ACTIONS.has(action.name) && result.ok)) readResults.clear();
+        let repeatedReads = 0;
+        for (const { action, result } of results.items) {
+            if (!READ_ONLY_ACTIONS.has(action.name)) continue;
+            const key = action.name + JSON.stringify(action.arguments);
+            const value = JSON.stringify(result);
+            const previous = readResults.get(key);
+            const count = previous?.result === value ? previous.count + 1 : 1;
+            readResults.set(key, { result: value, count });
+            repeatedReads = Math.max(repeatedReads, count);
+        }
+        loopWarning = repeatedReads >= 2
+            ? "\n\n【纠正重复读取】\n相同读取已多次返回完全相同的结果，没有新信息。完整节点正文和任务状态已在工具结果中；请直接依据这些结果执行用户已要求的修改，或在任务尚未完成时说明等待并结束本轮。不要再次读取相同内容，不要重复创建节点或提交任务。"
+            : "";
+        if (repeatedReads >= 3) finalReason = "检测到重复读取同一内容且没有进展，已停止本轮空转。";
 
         if (nativeActions.length && toolMode === "native") {
             protocolMessages = [

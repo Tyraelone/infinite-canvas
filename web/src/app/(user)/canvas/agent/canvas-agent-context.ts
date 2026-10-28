@@ -2,6 +2,7 @@ import { isGlmTtsModel } from "@/lib/audio-generation";
 import { isGrok2APITtsConfig } from "@/lib/grok-tts";
 import { isGeminiConfig, isGeminiTtsModel } from "@/lib/gemini";
 import { supportsVideoAudioGeneration } from "@/lib/video-model-capabilities";
+import { isLocalH3Model, LOCAL_H3_MAX_REFERENCES } from "@/lib/local-runtime";
 import { type AiConfig } from "@/stores/use-config-store";
 import { CanvasNodeType, type CanvasAgentState, type CanvasConnection, type CanvasNodeData } from "../types";
 
@@ -48,6 +49,9 @@ export type CanvasAgentContext = {
         videoSeconds: string;
         videoGenerateAudio: string;
         videoSupportsAudio: boolean;
+        videoReferenceMode?: string;
+        videoSupportsRef2VA: boolean;
+        videoMaxImageReferences?: number;
         audioVoice: string;
         audioLanguage: string;
         audioFormat: string;
@@ -129,6 +133,9 @@ export function buildCanvasAgentContext(input: BuildCanvasAgentContextInput): Ca
             videoSeconds: input.config.videoSeconds,
             videoGenerateAudio: input.config.videoGenerateAudio,
             videoSupportsAudio: supportsVideoAudioGeneration(videoModel),
+            videoReferenceMode: input.config.videoMode,
+            videoSupportsRef2VA: videoModel === "local-h3-quality",
+            videoMaxImageReferences: isLocalH3Model(videoModel) ? videoModel === "local-h3-quality" ? LOCAL_H3_MAX_REFERENCES : 1 : undefined,
             audioVoice: isGeminiTtsModel(audioModel) && isGeminiConfig(audioConfig, audioModel) ? input.config.geminiTtsVoice : isGlmTtsModel(audioModel) ? input.config.glmTtsVoice : grokTts ? input.config.grokTtsVoice : input.config.audioVoice,
             audioLanguage: grokTts ? input.config.grokTtsLanguage : "",
             audioFormat: isGlmTtsModel(audioModel) ? input.config.glmTtsFormat : grokTts ? input.config.grokTtsFormat : input.config.audioFormat,
@@ -179,6 +186,7 @@ function summarizeNode(node: CanvasNodeData): CanvasAgentContextNode {
 }
 
 function mediaTaskId(node: CanvasNodeData) {
+    if (node.metadata?.compositionTaskId) return node.metadata.compositionTaskId;
     if (node.type === CanvasNodeType.Video) return node.metadata?.videoTaskId || "";
     if (node.type === CanvasNodeType.Audio) return node.metadata?.audioTaskId || "";
     if (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Panorama) return node.metadata?.imageTaskId || "";

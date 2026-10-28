@@ -24,7 +24,7 @@ import {
     Video,
     X,
 } from "lucide-react";
-import { App, AutoComplete, Button, Dropdown, Modal, Segmented, Switch, Tooltip } from "antd";
+import { App, AutoComplete, Button, Dropdown, Modal, Segmented, Select, Switch, Tooltip } from "antd";
 import { motion } from "motion/react";
 import { nanoid } from "nanoid";
 import ReactMarkdown, { type Components } from "react-markdown";
@@ -32,6 +32,10 @@ import remarkGfm from "remark-gfm";
 
 import { ImageGenerationPending } from "@/components/image-generation-pending";
 import { useCopyText } from "@/hooks/use-copy-text";
+import { beginWorkspaceGeneration } from "@/services/local-workspace";
+import { LOCAL_CHANNEL_ID, resolveLocalCodexSelection } from "@/lib/local-runtime";
+import { fetchLocalCodexModels } from "@/services/api/local-runtime";
+import type { CodexModel } from "@/services/api/codex-agent";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { cn } from "@/lib/utils";
 import { fetchSystemAgentSkillFile } from "@/services/api/agent-skills";
@@ -140,7 +144,12 @@ export function CanvasAssistantPanel({
     const cleanupImages = useAssetStore((state) => state.cleanupImages);
     const { message: appMessage } = App.useApp();
     const mode = agentConfig.mode || "api";
+    const isLocalCodex = mode === "api" && effectiveConfig.textChannelId === LOCAL_CHANNEL_ID && effectiveConfig.textModel === "codex-local";
+    const [localCodexModels, setLocalCodexModels] = useState<CodexModel[]>([]);
+    const [localModelsLoading, setLocalModelsLoading] = useState(false);
+    const [localModelsError, setLocalModelsError] = useState("");
     const abortRef = useRef<AbortController | null>(null);
+    const sendingRef = useRef(false);
     const consumedInitialRequestRef = useRef<typeof initialRequest>(null);
     const pendingDeleteRef = useRef<PendingDeleteConfirmation | null>(null);
     const messageListRef = useRef<HTMLDivElement>(null);
@@ -151,6 +160,20 @@ export function CanvasAssistantPanel({
     const [checkedChatIds, setCheckedChatIds] = useState<string[]>([]);
     const [deleteChatIds, setDeleteChatIds] = useState<string[]>([]);
     const [settingsOpen, setSettingsOpen] = useState(false);
+    useEffect(() => {
+        if (!isLocalCodex) return;
+        const controller = new AbortController();
+        setLocalModelsLoading(true);
+        setLocalModelsError("");
+        fetchLocalCodexModels(controller.signal).then((models) => {
+            if (!controller.signal.aborted) setLocalCodexModels(models);
+        }).catch((error) => {
+            if (!controller.signal.aborted) setLocalModelsError(error instanceof Error ? error.message : "读取模型失败");
+        }).finally(() => {
+            if (!controller.signal.aborted) setLocalModelsLoading(false);
+        });
+        return () => controller.abort();
+    }, [isLocalCodex, settingsOpen]);
     const [closing, setClosing] = useState(false);
     const [resizing, setResizing] = useState(false);
     const [composerReferenceIds, setComposerReferenceIds] = useState<string[]>([]);
@@ -378,9 +401,11 @@ export function CanvasAssistantPanel({
         setCheckedChatIds([]);
         setDeleteChatIds([]);
     };
-    const codexModel = codex.models.find((item) => item.model === agentConfig.codexModel) || codex.models.find((item) => item.isDefault) || codex.models[0];
+    const availableCodexModels = isLocalCodex ? localCodexModels : codex.models;
+    const codexSelection = resolveLocalCodexSelection(availableCodexModels, agentConfig.codexModel, agentConfig.codexEffort);
+    const codexModel = codexSelection.model;
     const effortLabels: Record<string, string> = { none: "不推理", minimal: "最低", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最大", ultra: "超高" };
-    const codexEffort = agentConfig.codexEffort || codexModel?.defaultReasoningEffort;
+    const codexEffort = codexSelection.effort;
     const showCodexConnection = mode === "codex" && (view === "connect" || (view === "chat" && codex.status !== "ready"));
     useEffect(() => {
         if (view !== "chat" || showCodexConnection) return;
@@ -390,20 +415,25 @@ export function CanvasAssistantPanel({
         });
         return () => window.cancelAnimationFrame(frame);
     }, [messages, view, showCodexConnection]);
-    const codexControls = mode === "codex" ? (
+    const codexControls = mode === "codex" || isLocalCodex ? (
         <>
-            <Dropdown trigger={["click"]} placement="topLeft" disabled={isRunning || !codex.models.length} menu={{ selectable: true, selectedKeys: codexModel ? [codexModel.model] : [], items: codex.models.map((item) => ({ key: item.model, label: item.displayName })), onClick: ({ key }) => onAgentConfigChange({ codexModel: key, codexEffort: undefined }) }}>
-                <Button type="text" className="!h-9 !min-w-8 !shrink-0 !px-2" style={{ color: theme.node.text }} icon={<Cpu className="size-4" />} aria-label="选择 Codex 模型"><span className="hidden max-w-28 truncate @[660px]:inline">{codexModel?.displayName || "选择模型"}</span></Button>
+            <Dropdown trigger={["click"]} placement="topLeft" disabled={isRunning || (isLocalCodex && localModelsLoading) || !availableCodexModels.length} menu={{ selectable: true, selectedKeys: codexModel ? [codexModel.model] : [], items: availableCodexModels.map((item) => ({ key: item.model, label: item.displayName })), onClick: ({ key }) => onAgentConfigChange({ codexModel: key, codexEffort: undefined }) }}>
+                <Button type="text" className="!h-9 !min-w-8 !shrink-0 !px-2" style={{ color: theme.node.text }} icon={<Cpu className="size-4" />} title={codexModel?.displayName || "选择模型"} aria-label="选择 Codex 模型"><span className="hidden max-w-28 truncate @[660px]:inline">{codexModel?.displayName || "选择模型"}</span></Button>
             </Dropdown>
             <Dropdown trigger={["click"]} placement="topLeft" disabled={isRunning || !codexModel?.supportedReasoningEfforts.length} menu={{ selectable: true, selectedKeys: codexEffort ? [codexEffort] : [], items: codexModel?.supportedReasoningEfforts.map((item) => ({ key: item.reasoningEffort, label: effortLabels[item.reasoningEffort] || item.reasoningEffort })), onClick: ({ key }) => onAgentConfigChange({ codexEffort: key }) }}>
-                <Button type="text" className="!h-9 !min-w-8 !shrink-0 !px-2" style={{ color: theme.node.text }} icon={<Gauge className="size-4" />} aria-label="选择 Codex 推理强度"><span className="hidden @[660px]:inline">{effortLabels[codexEffort || ""] || codexEffort}</span></Button>
+                <Button type="text" className="!h-9 !min-w-8 !shrink-0 !px-2" style={{ color: theme.node.text }} icon={<Gauge className="size-4" />} title={"推理强度：" + (effortLabels[codexEffort || ""] || codexEffort || "未选择")} aria-label="选择 Codex 推理强度"><span className="hidden @[660px]:inline">{effortLabels[codexEffort || ""] || codexEffort}</span></Button>
             </Dropdown>
         </>
     ) : undefined;
 
-    const sendMessage = async (text: string, savedReferences?: CanvasAssistantReference[], skillOverride?: CanvasAgentSkillSelection[] | null, showSelectedSkills = skillOverride === undefined && selectedSkills.length > 0) => {
+    const sendMessageWork = async (text: string, savedReferences?: CanvasAssistantReference[], skillOverride?: CanvasAgentSkillSelection[] | null, showSelectedSkills = skillOverride === undefined && selectedSkills.length > 0) => {
         if (abortRef.current) return;
         if (mode === "codex" && codex.status !== "ready") { setView("connect"); appMessage.info("请先连接本地 Codex 服务"); return; }
+        if (isLocalCodex && (localModelsLoading || localModelsError || codexSelection.error)) {
+            setSettingsOpen(true);
+            appMessage.error(localModelsLoading ? "正在读取 Codex 模型，请稍后发送" : localModelsError || codexSelection.error);
+            return;
+        }
         const session = activeSession || createSession(mode);
         const activeSkills = skillOverride !== undefined ? skillOverride || [] : selectedSkills.length ? selectedSkills : session.activeSkills || [];
         let activeSkillContents: Array<{ id: string; source: CanvasAgentSkillSelection["source"]; name: string; content: string; hasFiles?: boolean }> = [];
@@ -428,6 +458,10 @@ export function CanvasAssistantPanel({
             activeSkillContents = latestSkills.map((skill) => ({ id: skill!.id, source: skill!.source, name: skill!.name, content: skill!.content, hasFiles: skill!.hasFiles }));
         }
 
+        let finishWorkspaceGeneration: () => void;
+        try { finishWorkspaceGeneration = await beginWorkspaceGeneration(canvasId); }
+        catch (error) { appMessage.error(error instanceof Error ? error.message : "无法取得制作页面的保存权限"); return; }
+        try {
         if (!activeSession) commitSessions([session, ...sessionsRef.current], session.id);
         updateSession(session.id, (current) => ({
             ...current,
@@ -448,8 +482,12 @@ export function CanvasAssistantPanel({
 
         const requestConfig = {
             ...effectiveConfig,
-            model: effectiveConfig.textModel || effectiveConfig.model,
-            apiMode: agentConfig.textApiMode,
+            model: isLocalCodex ? codexModel!.model : effectiveConfig.textModel || effectiveConfig.model,
+            textModel: isLocalCodex ? codexModel!.model : effectiveConfig.textModel,
+            apiMode: isLocalCodex ? "chat" : agentConfig.textApiMode,
+            textReasoningEffort: isLocalCodex ? codexEffort : undefined,
+            localChannels: isLocalCodex ? effectiveConfig.localChannels.map((channel) => channel.id === LOCAL_CHANNEL_ID
+                ? { ...channel, models: [...new Set([...channel.models, codexModel!.model])] } : channel) : effectiveConfig.localChannels,
             textStreaming: agentConfig.textStreaming === true,
             textReasoningEnabled: agentConfig.textReasoningEnabled === true,
             activeChannelId: effectiveConfig.textChannelId || effectiveConfig.activeChannelId,
@@ -531,14 +569,22 @@ export function CanvasAssistantPanel({
             if (abortRef.current === controller) abortRef.current = null;
             setIsRunning(false);
         }
+        } finally { finishWorkspaceGeneration(); }
+    };
+
+    const sendMessage = async (...args: Parameters<typeof sendMessageWork>) => {
+        if (sendingRef.current) return;
+        sendingRef.current = true;
+        try { await sendMessageWork(...args); } finally { sendingRef.current = false; }
     };
 
     useEffect(() => {
         if (!initialRequest || consumedInitialRequestRef.current === initialRequest) return;
+        if (isLocalCodex && (localModelsLoading || localModelsError || codexSelection.error)) return;
         consumedInitialRequestRef.current = initialRequest;
         onInitialRequestConsumed?.();
         void sendMessage(initialRequest.prompt, initialRequest.references, initialRequest.skills, initialRequest.skills.length > 0);
-    }, [initialRequest, onInitialRequestConsumed]);
+    }, [initialRequest, onInitialRequestConsumed, isLocalCodex, localModelsLoading, localModelsError, codexSelection.error]);
 
     const submit = async (nextPrompt = prompt, referenceIds = composerReferenceIds) => {
         const text = nextPrompt.trim();
@@ -710,7 +756,24 @@ export function CanvasAssistantPanel({
                     onCancel={() => setSettingsOpen(false)}
                     footer={<Button type="primary" onClick={() => setSettingsOpen(false)}>完成</Button>}
                 >
-                    {mode !== "codex" ? <div className="flex items-center justify-between gap-6 py-2">
+                    {isLocalCodex ? <>
+                        <div className="flex items-center justify-between gap-6 py-2">
+                            <div className="text-sm font-medium">Codex 模型</div>
+                            <Select aria-label="创作 Agent 模型" className="w-56" loading={localModelsLoading} disabled={isRunning || localModelsLoading}
+                                value={codexModel?.model || agentConfig.codexModel} placeholder="选择模型"
+                                options={localCodexModels.map((item) => ({ value: item.model, label: item.displayName }))}
+                                onChange={(codexModel) => onAgentConfigChange({ codexModel, codexEffort: undefined })} />
+                        </div>
+                        <div className="flex items-center justify-between gap-6 py-2">
+                            <div className="text-sm font-medium">推理强度</div>
+                            <Select aria-label="创作 Agent 推理强度" className="w-56" disabled={isRunning || localModelsLoading || !codexModel}
+                                value={codexEffort} placeholder="选择推理强度"
+                                options={codexModel?.supportedReasoningEfforts.map((item) => ({ value: item.reasoningEffort, label: effortLabels[item.reasoningEffort] || item.reasoningEffort }))}
+                                onChange={(codexEffort) => onAgentConfigChange({ codexEffort })} />
+                        </div>
+                        <div className="pb-2 text-xs leading-5 opacity-55">{localModelsError || (localCodexModels.length ? codexSelection.error || "选项来自当前 Codex 账号；设置随画布保存，后续发送时生效。" : localModelsLoading ? "正在读取账号可用模型…" : "当前账号没有可用模型。")}</div>
+                    </> : null}
+                    {mode !== "codex" && !isLocalCodex ? <div className="flex items-center justify-between gap-6 py-2">
                         <div className="min-w-0">
                             <div className="text-sm font-medium">文本接口</div>
                             <div className="mt-1 text-xs leading-5 opacity-55">选择使用 Chat Completions 或 Responses 接口</div>

@@ -7,6 +7,8 @@ import { readImageMeta } from "@/lib/image-utils";
 import { deleteAnonymousStorageFile, uploadAnonymousStorageFile } from "@/services/anonymous-storage";
 import { apiGet } from "@/services/api/request";
 import { useUserStore } from "@/stores/use-user-store";
+import { ensureLocalWorkspace, loadWorkspaceBlob, localWorkspaceEnabled, saveWorkspaceBlob } from "@/services/local-workspace";
+import { workspaceFileUrl } from "@/lib/local-workspace";
 
 export type UploadedImage = {
     url: string;
@@ -65,6 +67,7 @@ const autoSyncRequests = new Map<string | Blob, Promise<{ storageKey: string } |
 let autoSyncOwner = "";
 
 export async function autoSyncToCloud<T extends { storageKey: string }>(source: string | Blob, upload: () => Promise<T | null>): Promise<T | null> {
+    if (await localWorkspaceEnabled()) return null;
     const config = await loadStorageConfig().catch(() => null);
     if (!config?.autoSyncAllAssets || (!canUseGlobalStorage(config) && !(config.allowUserProvider && loadUserStorageProvider()))) return null;
     const owner = useUserStore.getState().token;
@@ -187,6 +190,13 @@ export async function uploadImage(input: string | Blob, options: UploadImageOpti
     } else {
         blob = url;
     }
+    if (await localWorkspaceEnabled()) {
+        const storageKey = `image:${nanoid()}`;
+        const savedUrl = await saveWorkspaceBlob(storageKey, blob);
+        if (!savedUrl) throw new Error("本机媒体保存失败");
+        const meta = await readImageMeta(savedUrl);
+        return { url: savedUrl, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+    }
     if (!options.localOnly) {
         const serverUpload = await maybeUploadImageToServer(blob, options.token);
         if (serverUpload) return serverUpload;
@@ -200,6 +210,7 @@ export async function uploadImage(input: string | Blob, options: UploadImageOpti
 }
 
 export async function uploadRemoteImageToServer(url: string, filename: string): Promise<UploadedImage> {
+    if (await localWorkspaceEnabled()) return uploadImage(url, { localOnly: true });
     const response = await fetch(getProxyUrl(url));
     if (!response.ok) {
         const payload = await response.json().catch(() => null) as { msg?: string } | null;
@@ -236,6 +247,7 @@ export function clearStorageConfigCache() {
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
+    if (await ensureLocalWorkspace()) return workspaceFileUrl(storageKey);
     if (storageKey.startsWith("server:webdav:")) {
         const localUrl = await resolveLocalImageUrl(storageKey).catch(() => "");
         if (localUrl) return localUrl;
@@ -349,10 +361,14 @@ function imageExtension(mimeType: string) {
 }
 
 export async function getImageBlob(storageKey: string) {
+    const shared = await loadWorkspaceBlob(storageKey);
+    if (shared !== undefined) return shared;
     return store.getItem<Blob>(storageKey);
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
+    const shared = await saveWorkspaceBlob(storageKey, blob);
+    if (shared !== undefined) return shared;
     await store.setItem(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
@@ -396,6 +412,7 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
 }
 
 export async function deleteStoredImages(keys: Iterable<string>, ownerToken?: string) {
+    if (await localWorkspaceEnabled()) return;
     const { useAssetStore } = await import("@/stores/use-asset-store");
     const assetKeys = new Set(
         useAssetStore.getState().assets
@@ -419,6 +436,7 @@ export async function deleteStoredImages(keys: Iterable<string>, ownerToken?: st
 }
 
 export async function cleanupUnusedImages(usedData: unknown, storageKeys: ReadonlyMap<string, string> = new Map(), ownerToken?: string) {
+    if (await localWorkspaceEnabled()) return;
     const usedKeys = collectImageStorageKeys(usedData, new Set(), storageKeys);
     const unused = Array.from(new Set(storageKeys.values())).filter((key) => key.startsWith("server:") && !usedKeys.has(key));
     await store.iterate((_value, key) => {

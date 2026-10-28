@@ -66,6 +66,7 @@ export type AiConfig = {
     videoElementList: VideoElementItem[];
     vquality: string;
     videoGenerateAudio: string;
+    videoUpscale: string;
     videoWatermark: string;
     videoCharacterOrientation: string;
     systemPrompt: string;
@@ -141,6 +142,7 @@ export const defaultConfig: AiConfig = {
     videoElementList: [{ name: "", description: "", references: [] }],
     vquality: "720",
     videoGenerateAudio: "true",
+    videoUpscale: "false",
     videoWatermark: "false",
     videoCharacterOrientation: "video",
     systemPrompt: "",
